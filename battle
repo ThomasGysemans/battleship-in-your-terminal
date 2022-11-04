@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+# /!\ requires a version >= 4.3
+
+if [[ ${BASH_VERSION:0:1} -lt 4 || (${BASH_VERSION:0:1} -eq 4 && ${BASH_VERSION:1:1} -lt 3) ]] ; then
+  echo "La version de bash n'est pas bonne : $BASH_VERSION"
+  echo "Veuillez passer à la version 4.3 au minimum."
+  exit 1
+fi
+
+IFS=" " # define a white space as the separator between words when reading coordinates
+
+TURN=1
+ALPHABET="ABCDEFGHIJ"
+GRID_1=""
+GRID_2=""
+BOATS=(5 1 "Porte-avions" 4 1 "Croiseur" 3 2 "Contre-torpilleurs" 2 1 "Torpilleur")
+# BOATS=(3 1 "Porte-avions") # uncomment this line for easier debugging
+
+function calculate_max_hits() {
+  local SUM=0
+  for (( i=0; i < ${#BOATS}; i+=3 )) ; do
+    ((SUM+="${BOATS[i]}"))
+  done
+  echo "$SUM"
+}
+
+# In order to check if someone won the game,
+# we don't want to check for every character in the grid if there is a 1 left.
+# At every turn this is not performant.
+# However we know that to win, you need a very specific amount of strikes,
+# that corresponds to the number of cells where there is a target.
+MAX_HITS=$(calculate_max_hits)
+PLAYER_1_HITS_COUNT=0
+PLAYER_2_HITS_COUNT=0
+
+function init_grid() {
+  local GRID=""
+  for y in {1..100} ; do
+    GRID+="0"
+  done
+  if [[ $1 == 1 ]] ; then
+    GRID_1=$GRID
+  else
+    GRID_2=$GRID
+  fi
+}
+
+function is_letter() {
+  str=$(tr -d "[:alpha:]" <<< "$1")
+  if [[ -z $str ]] ; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+function is_digit() {
+  str=$(tr -d "[:digit:]" <<< "$1")
+  if [[ -z $str ]] ; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# Get index of character $2 in haystack $1
+function strpos() {
+  haystack=$1
+  needle=$2
+  x="${haystack%%"$needle"*}"
+  [[ "$x" = "$haystack" ]] && { echo -1; return 1; } || echo "${#x}"
+}
+
+# Calculate the index in a standard grid according to the given coordinates $1
+function pos_to_index() {
+  local POS=$1
+  local LETTER=${POS:0:1}
+  local DIGIT=${POS:1:1}
+  local LETTER_POS
+  LETTER_POS=$(strpos "$ALPHABET" "$LETTER")
+  local INDEX=$(( LETTER_POS * 10 + DIGIT ))
+  echo "$INDEX";
+}
+
+# Get the status of the cell at pos $2 within the grid $1
+function get_pos() {
+  if [[ $1 -eq 1 ]] ; then
+    GRID=$GRID_1
+  else
+    GRID=$GRID_2
+  fi
+  echo ${GRID:$(pos_to_index "$2"):1}
+}
+
+# Set status to $3 of cell at pos $2 in grid $1
+function mark_pos() {
+  if [[ $1 -eq 1 ]] ; then
+    replace_character "$(pos_to_index "$2")" "$3" GRID_1
+  else
+    replace_character "$(pos_to_index "$2")" "$3" GRID_2
+  fi
+}
+
+# Check if the user input is correct coordinates
+function validate_coordinates() {
+  local PREVIOUS_LETTER=-1
+  local PREVIOUS_DIGIT=-1
+  for pos in "$@" ; do
+    if [[ ${#pos} -ne 2 ]] ; then
+      echo "Des coordonnées s'écrivent par pair. Une lettre, puis un chiffre. Ceci est invalide : '$pos'."
+      return 1
+    fi
+    LETTER=${pos:0:1}
+    DIGIT=${pos:1:1}
+    if (! is_letter "$LETTER") ; then
+      echo "Le premier caractère d'une coordonnée doit être une lettre. Ceci est invalide : '$pos'."
+      return 1
+    elif (grep -qvi "$LETTER" <<< $ALPHABET) ; then
+      echo "La lettre doit être comprise entre ${ALPHABET:0:1} et ${ALPHABET:0-1:1}. Ceci est invalide : '$pos'."
+      return 1
+    fi
+    if (! is_digit "$DIGIT") ; then
+      echo "Le second caractère d'une coordonnée doit être un chiffre entre 0 et 9. Ceci est invalide : '$pos'."
+      return 1
+    fi
+    if [[ $PREVIOUS_DIGIT -ne -1 ]] ; then # it means that we're looking at the second position
+      if [[ $PREVIOUS_DIGIT -eq $DIGIT ]] ; then # vertical boat
+        LETTER_POS=$(strpos "$ALPHABET" "$LETTER")
+        PREVIOUS_LETTER_POS=$(strpos "$ALPHABET" "$PREVIOUS_LETTER")
+        if [[ $LETTER_POS -ne $(( PREVIOUS_LETTER_POS + 1 )) ]] ; then
+          echo "Votre bateau a l'air d'être vertical, mais cette coordonnée n'est pas alignée : $pos"
+          return 1
+        fi
+      else # horizontal or diagonal boat
+        if [[ $DIGIT -ne $(( PREVIOUS_DIGIT + 1 )) || $LETTER != "$PREVIOUS_LETTER" ]] ; then
+          echo "Cette coordonnée n'est pas alignée : $pos. Positionnez votre bateau horizontalement ou verticalement."
+          return 1
+        fi
+      fi
+    fi
+    PREVIOUS_LETTER=$LETTER
+    PREVIOUS_DIGIT=$DIGIT
+  done
+}
+
+function replace_character() {
+  local -n ref=$3
+  local POS=$1
+  beginning=${ref:0:POS}
+  ending=${ref:(( POS + 1 ))}
+  ref="$beginning$2$ending"
+}
+
+function place_boats() {
+  local FIRST=0
+  local CELL
+  for (( b=0; b < ${#BOATS[@]}; b=b+3 )) ; do
+    N_CASES=${BOATS[b]}
+    N_BOATS=${BOATS[$(( "$b" + 1 ))]}
+    NAME=${BOATS[$(( "$b" + 2 ))]}
+    echo ""
+    echo "Veuillez placer $( if [[ $N_BOATS -gt 1 ]] ; then echo "vos" ; else echo "votre" ; fi ) $NAME"
+    echo "-- Nombre de cases : $N_CASES"
+    echo "-- Nombre de bateaux de ce type : $N_BOATS"
+    echo ""
+    if [[ $FIRST -eq 0 ]] ; then
+      echo "Veuillez entrer chaque coordonnée séparée par un espace de chaque case que le bateau occupera dans l'ordre. Exemple : A1 A2."
+      FIRST=1
+    fi
+    for (( n=0; n < "$N_BOATS"; n++ )) ; do
+      while : ; do
+        read -ra POSITIONS # words are separated by a white space thanks to -a
+        if [[ ${#POSITIONS[@]} -ne N_CASES ]] ; then
+          echo "Il faut $N_CASES coordonnées pour ce bateau."
+        else
+          validate_coordinates "${POSITIONS[@]}" || continue
+          CELL=$(get_pos "$1" "$pos")
+          if [[ $CELL -ne 0 ]] ; then
+            echo "La case $pos est déjà remplie !"
+          else
+            break
+          fi
+        fi
+      done
+      for pos in "${POSITIONS[@]}" ; do
+        mark_pos "$1" "$pos" "1"
+      done
+      display_grid "$1"
+    done
+  done
+}
+
+# Accepts $1 an integer
+# 1 for grid of player 1 with full info
+# 2 for grid of player 2 with full info
+# 3 for grid of player 1 without the boats (the view of the player 2 when attacking)
+# 4 for grid of player 2 without the boats (the view of the player 1 when attacking)
+function display_grid() {
+  echo -n "   | "
+  for i in {0..9} ; do
+    echo -n " $i "
+  done
+  echo " "
+  for (( i=0; i < $(( ${#ALPHABET} - 1 )); i++ )) ; do
+    echo -n ${ALPHABET:$i:1} " | "
+    for y in {1..10} ; do
+      local CHARACTER=" "
+      local INDEX=$(( i * 10 + (y - 1) ))
+      if [[ $1 -ne -1 ]] ; then
+        local GRID;
+        if [[ $1 -eq 1 || $1 -eq 3 ]] ; then
+          GRID=$GRID_1
+        elif [[ $1 -eq 2 || $1 -eq 4 ]] ; then
+          GRID=$GRID_2
+        fi
+        if [[ $1 -gt 2 ]] ; then # it means the player wants to see the other player's grid according to his info
+          case ${GRID:$INDEX:1} in
+            2) CHARACTER="X" ;; # missed
+            3) CHARACTER="O" ;; # strike
+          esac
+        else # it means the player wants to see his own grid
+          case ${GRID:$INDEX:1} in
+            1) CHARACTER="#" ;; # boat
+            2) CHARACTER="X" ;; # missed
+            3) CHARACTER="O" ;; # strike
+          esac
+        fi
+      fi
+      echo -n " $CHARACTER "
+    done
+    echo " "
+  done
+}
+
+function change_turn() {
+  if [[ $TURN -eq 1 ]] ; then
+    TURN=2
+  else
+    TURN=1
+  fi
+}
+
+# Checks if the player $1 reached the maximum amount of good hits possible
+# Returns 0 if the player $1 won
+# Returns 1 otherwise
+function has_won() {
+  if [[ $1 -eq 1 ]] ; then
+    if [[ $PLAYER_1_HITS_COUNT -eq $MAX_HITS ]] ; then
+      return 0
+    fi
+  else
+    if [[ $PLAYER_2_HITS_COUNT -eq $MAX_HITS ]] ; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+function play() {
+  local CELL
+  local DISPLAY_GRID_INDEX
+  local REAL_GRID
+  while : ; do
+    if [[ $TURN -eq 1 ]] ; then
+      DISPLAY_GRID_INDEX=4
+      REAL_GRID=2
+    else
+      DISPLAY_GRID_INDEX=3
+      REAL_GRID=1
+    fi
+    echo "Joueur $TURN, voici la grille de votre ennemi selon vos informations : "
+    display_grid $DISPLAY_GRID_INDEX
+    echo "Il est temps de l'attaquer !!"
+    while : ; do
+      echo "Entrez les coordonnées de votre frappe : "
+      read -ra STRIKE_POS
+      if [[ ${#STRIKE_POS[@]} -ne 1 ]] ; then
+        echo "Vous ne pouvez attaquer qu'une seule coordonnée à la fois !"
+      else
+        validate_coordinates "${STRIKE_POS[@]}" || continue
+        CELL=$(get_pos $REAL_GRID "${STRIKE_POS[0]}")
+        if [[ $CELL -gt 1 ]] ; then
+          echo "Vous avez déjà lancé une frappe ici !"
+        else
+          break
+        fi
+      fi
+    done
+    if [[ $CELL -eq 0 ]] ; then
+      echo "Manqué !"
+      mark_pos $REAL_GRID "${STRIKE_POS[0]}" "2"
+      change_turn
+      echo "C'est au tour du joueur numéro $TURN."
+    else
+      echo "Touché !"
+      mark_pos $REAL_GRID "${STRIKE_POS[0]}" "3"
+      if [[ $TURN -eq 1 ]] ; then
+        ((PLAYER_1_HITS_COUNT++))
+      else
+        ((PLAYER_2_HITS_COUNT++))
+      fi
+      if (has_won $TURN) ; then
+        echo "Vous avez gagné !"
+        return 0
+      fi
+    fi
+  done
+}
+
+echo "Bienvenu dans le jeu de bataille navale !"
+echo " "
+echo "---------------------------------------"
+echo "Le joueur 1 doit dessiner sa grille."
+echo "Le deuxième joueur ne peut pas regarder !"
+echo " "
+display_grid -1
+init_grid 1
+init_grid 2
+place_boats 1
+echo ""
+echo "C'est au tour du joueur numéro 2"
+echo "Le joueur est-il prêt ? Appuyez sur entrer pour continuer"
+read -r
+clear
+echo "Placez vos bateaux, sans que le joueur numéro 1 ne regarde."
+display_grid -1
+place_boats 2
+echo ""
+echo "Ok, tout est prêt ! Appuyez sur entrer continuer."
+read -r
+clear
+play
