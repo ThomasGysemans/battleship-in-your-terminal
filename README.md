@@ -2,6 +2,8 @@
 
 Play the traditional game "Battleship", also called "Sea Battle", in your Terminal.
 
+> **NOTE** : the whole game is in **French**.
+
 ## How to play
 
 Everything is in a single file named `battle`. Download it and make sure you can execute it.
