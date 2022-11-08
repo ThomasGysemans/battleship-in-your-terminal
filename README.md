@@ -35,7 +35,7 @@ The code is written in BASH. Use a version >= 4.3. The game checks your version 
 
 ## Debugging
 
-If you're a developer and want to change the code a little then uncomment the line 17 to start with fewer boats.
+If you're a developer and want to change the code a little then uncomment the line 20 to start with fewer boats.
 
 ## Author
 
